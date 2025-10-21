@@ -210,4 +210,3 @@ void delay_lcd(unsigned int r1)
     unsigned int r;
     for (r = 0; r < r1; r++);
 }
-
