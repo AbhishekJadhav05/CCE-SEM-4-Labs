@@ -8,6 +8,7 @@
 #define ADC_CHANNEL 0
 #define TEMP_THRESHOLD 30  // corresponds to ~30°C
 #define TEMP_ADJUST 55
+#define BYPASS_PIR 0
 
 void lcd_write(void);
 void port_write(void);
@@ -68,6 +69,9 @@ int main(void)
 					ifDetectedTEMP = 0;
 				}
         ifDetectedPIR = (LPC_GPIO0->FIOPIN & PIR_PIN) ? 1 : 0; // Normalize to 0 or 1
+				if(BYPASS_PIR){
+						ifDetectedPIR = 1;
+				}
         if (ifDetectedTEMP & ifDetectedPIR) // Motion detected
         {
 
