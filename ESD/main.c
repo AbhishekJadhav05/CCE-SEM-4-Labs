@@ -8,61 +8,59 @@
 #define D5_PIN  (1 << 7)  // P0.7
 #define D6_PIN  (1 << 6)  // P0.6
 #define D7_PIN  (1 << 4)  // P0.4
-// Mask for all LCD data pins
+// Mask for all LCD data and control pins
+#define LCD_CTRL (DT_CTRL | RS_CTRL | EN_CTRL)
 #define DT_CTRL (D4_PIN | D5_PIN | D6_PIN | D7_PIN)
 
-// --- Pin Definitions for Sensors and LEDs ---
+// --- Pin Definitions for Sensors ---
 #define PIR_PIN     (1 << 15) // P0.15 (Input)
-#define PIR_LED_PIN (1 << 5)  // P0.5  (Output)
-#define ADC_LED_PIN (1 << 11) // P0.11 (Output)
 
 // --- ADC Configuration ---
 #define ADC_CHANNEL 0      // AD0.0 on P0.23
-#define TEMP_THRESHOLD 372 // Threshold from your ADC code (~30°C)
+#define TEMP_THRESHOLD 372 // Threshold for temperature sensor (~30°C)
 
 // --- Global Variables ---
 unsigned long int temp1, temp2;
 unsigned int i;
 unsigned char flag1; // 0 for command, 1 for data
 unsigned long int init_command[] = {0x33, 0x32, 0x28, 0x0C, 0x06, 0x01, 0x80};
-char line1_str[17];
-char line2_str[17];
 
 // --- Function Prototypes ---
+void lcd_puts(const char *str);
 void lcd_write(void);
 void port_write(void);
-void delay_lcd(unsigned int);
+void delay_lcd(unsigned int r1);
 void ADC_Init(void);
 uint16_t ADC_Read(void);
-void lcd_display_status(int pir_state, uint16_t adc_val);
+void lcd_set_cursor(int row, int col);
+
 
 int main(void)
 {
     unsigned long int pir_status;
     uint16_t adc_value;
-	
-    // Variables to track state and prevent LCD flicker
-    int last_pir_status = -1; // Use -1 to force initial update
-    uint16_t last_adc_value = 0;
+    int is_intrusion = 0;
+    int last_intrusion_state = -1; // Use -1 to force initial display update
+    char line1_buffer[17];
+    char line2_buffer[17];
 
     SystemInit();
     SystemCoreClockUpdate();
 
     // --- 1. Configure Pin Functions (PINSEL) ---
-    LPC_PINCON->PINSEL0 = 0; // Set all P0.0-P0.15 to GPIO
-    LPC_PINCON->PINSEL1 = 0; // Set all P0.16-P0.31 to GPIO
+    // Set all relevant Port 0 pins to GPIO function
+    LPC_PINCON->PINSEL0 = 0; 
+    LPC_PINCON->PINSEL1 = 0; 
     
-    // Configure P0.23 as AD0.0
+    // Configure P0.23 as AD0.0 for the ADC sensor
     LPC_PINCON->PINSEL1 |= (1 << 14);
 
     // --- 2. Configure Pin Direction (FIODIR) ---
-    // Set outputs for LEDs and LCD
-    LPC_GPIO0->FIODIR |= (DT_CTRL | RS_CTRL | EN_CTRL); // New LCD pins
-    LPC_GPIO0->FIODIR |= PIR_LED_PIN;   // P0.5
-    LPC_GPIO0->FIODIR |= ADC_LED_PIN;   // P0.11
+    // Set LCD pins as outputs
+    LPC_GPIO0->FIODIR |= LCD_CTRL;
     
-    // Set input for PIR sensor
-    LPC_GPIO0->FIODIR &= ~PIR_PIN;      // P0.15
+    // Set PIR sensor pin as input
+    LPC_GPIO0->FIODIR &= ~PIR_PIN;
 
     // --- 3. Initialize Hardware ---
     ADC_Init(); // Initialize ADC peripheral
@@ -81,62 +79,66 @@ int main(void)
         // Read sensor values
         pir_status = (LPC_GPIO0->FIOPIN & PIR_PIN);
         adc_value = ADC_Read();
+			
+        // Determine the current state
+        is_intrusion = (pir_status && (adc_value > TEMP_THRESHOLD));
 
-        // Logic for PIR Sensor -> PIR LED
-        if (pir_status) {
-            LPC_GPIO0->FIOSET = PIR_LED_PIN;
+        if (is_intrusion) {
+            // Only update the display if it's not already showing the intrusion message
+            if (last_intrusion_state != 1) {
+                last_intrusion_state = 1;
+                lcd_set_cursor(0, 0);
+                lcd_puts("Intrusion       "); // Pad with spaces to clear old text
+                lcd_set_cursor(1, 0);
+                lcd_puts("Detected!       ");
+            }
         } else {
-            LPC_GPIO0->FIOCLR = PIR_LED_PIN;
-        }
+            // --- NORMAL: Display live sensor data ---
+            last_intrusion_state = 0;
+            
+            // Format the strings with padding to clear the line
+            sprintf(line1_buffer, "PIR: %d         ", pir_status ? 1 : 0);
+            sprintf(line2_buffer, "TEMP: %-4d      ", adc_value);
 
-        // Logic for ADC Sensor -> ADC LED
-        if (adc_value > TEMP_THRESHOLD) {
-            LPC_GPIO0->FIOSET = ADC_LED_PIN;
-        } else {
-            LPC_GPIO0->FIOCLR = ADC_LED_PIN;
-        }
-
-        // Update LCD only if a value has changed
-        if (pir_status != last_pir_status || adc_value != last_adc_value) 
-        {
-            lcd_display_status(pir_status, adc_value);
-            last_pir_status = pir_status;
-            last_adc_value = adc_value;
+            lcd_set_cursor(0, 0);
+            lcd_puts(line1_buffer);
+            
+            lcd_set_cursor(1, 0);
+            lcd_puts(line2_buffer);
         }
         
-        delay_lcd(50000); // Poll sensors at a reasonable rate
+        delay_lcd(50000); // Small delay to prevent rapid polling
     }
 }
 
 /**
- * @brief Updates both lines of the LCD with current sensor status
- * @param pir_state The status of the PIR sensor (non-zero for motion)
- * @param adc_val The 12-bit value from the ADC
+ * @brief Sets the LCD cursor to a specific row and column.
+ * @param row The row (0 or 1).
+ * @param col The column (0 to 15).
  */
-void lcd_display_status(int pir_state, uint16_t adc_val)
-{
-    // --- Line 1: PIR Status ---
-    sprintf(line1_str, "PIR: %-3s", pir_state ? "YES" : "NO ");
-    
-    flag1 = 0; temp1 = 0x80; lcd_write(); // Set cursor to line 1
-    flag1 = 1; // Data mode
-    for (i = 0; line1_str[i] != '\0'; i++) {
-        temp1 = line1_str[i];
-        lcd_write();
+void lcd_set_cursor(int row, int col) {
+    unsigned char address;
+    if (row == 0) {
+        address = 0x80 + col;
+    } else {
+        address = 0xC0 + col;
     }
+    flag1 = 0; // Command mode
+    temp1 = address;
+    lcd_write();
+}
 
-    // --- Line 2: ADC Status ---
-    const char* temp_status = (adc_val > TEMP_THRESHOLD) ? "HOT" : "OK ";
-    sprintf(line2_str, "ADC:%4d T:%-3s", adc_val, temp_status);
-
-    flag1 = 0; temp1 = 0xC0; lcd_write(); // Set cursor to line 2
+/**
+ * @brief Writes a null-terminated string to the current LCD cursor position.
+ * @param str The string to write.
+ */
+void lcd_puts(const char *str) {
     flag1 = 1; // Data mode
-    for (i = 0; line2_str[i] != '\0'; i++) {
-        temp1 = line2_str[i];
+    for (i = 0; str[i] != '\0'; i++) {
+        temp1 = str[i];
         lcd_write();
     }
 }
-
 
 /**
  * @brief Writes a command/data byte to the LCD in 4-bit mode.
@@ -144,31 +146,30 @@ void lcd_display_status(int pir_state, uint16_t adc_val)
  */
 void lcd_write(void)
 {
-    // --- Send High Nibble (bits 4-7) ---
-    temp2 = 0; // Clear temp register
-    if (temp1 & 0x10) temp2 |= D4_PIN; // P0.8
-    if (temp1 & 0x20) temp2 |= D5_PIN; // P0.7
-    if (temp1 & 0x40) temp2 |= D6_PIN; // P0.6
-    if (temp1 & 0x80) temp2 |= D7_PIN; // P0.4
+    // Send High Nibble (bits 4-7)
+    temp2 = 0;
+    if (temp1 & 0x10) temp2 |= D4_PIN;
+    if (temp1 & 0x20) temp2 |= D5_PIN;
+    if (temp1 & 0x40) temp2 |= D6_PIN;
+    if (temp1 & 0x80) temp2 |= D7_PIN;
     port_write();
 
-    // --- Send Low Nibble (bits 0-3) ---
-    temp2 = 0; // Clear temp register
-    if (temp1 & 0x01) temp2 |= D4_PIN; // P0.8
-    if (temp1 & 0x02) temp2 |= D5_PIN; // P0.7
-    if (temp1 & 0x04) temp2 |= D6_PIN; // P0.6
-    if (temp1 & 0x08) temp2 |= D7_PIN; // P0.4
+    // Send Low Nibble (bits 0-3)
+    temp2 = 0;
+    if (temp1 & 0x01) temp2 |= D4_PIN;
+    if (temp1 & 0x02) temp2 |= D5_PIN;
+    if (temp1 & 0x04) temp2 |= D6_PIN;
+    if (temp1 & 0x08) temp2 |= D7_PIN;
     port_write();
 }
 
 /**
- * @brief Pulses the Enable (EN) pin to latch data.
- * This function is modified to use the new control pin definitions.
+ * @brief Pulses the Enable (EN) pin to latch data to the LCD.
  */
 void port_write(void)
 {
-    LPC_GPIO0->FIOCLR = DT_CTRL; // Clear all data pins
-    LPC_GPIO0->FIOSET = temp2;   // Set the required data bits
+    LPC_GPIO0->FIOCLR = DT_CTRL;
+    LPC_GPIO0->FIOSET = temp2;
 
     if (flag1 == 0)
         LPC_GPIO0->FIOCLR = RS_CTRL; // RS = 0 (Command)
@@ -182,7 +183,7 @@ void port_write(void)
 }
 
 /**
- * @brief Initializes the ADC peripheral (from your ADC code)
+ * @brief Initializes the ADC peripheral.
  */
 void ADC_Init(void) {
     LPC_SC->PCONP |= (1 << 12);      // Power up ADC
@@ -192,20 +193,21 @@ void ADC_Init(void) {
 }
 
 /**
- * @brief Reads a 12-bit value from the ADC (from your ADC code)
- * @return 12-bit ADC result
+ * @brief Reads a 12-bit value from the ADC.
+ * @return 12-bit ADC result.
  */
 uint16_t ADC_Read(void) {
     LPC_ADC->ADCR |= (1 << 24);      // Start conversion
     while ((LPC_ADC->ADGDR & (1U << 31)) == 0); // Wait for DONE bit
-    return (LPC_ADC->ADGDR >> 4) & 0xFFF; // 12-bit result
+    return (LPC_ADC->ADGDR >> 4) & 0xFFF;
 }
 
 /**
- * @brief Simple busy-wait delay
+ * @brief Simple busy-wait delay.
  */
 void delay_lcd(unsigned int r1)
 {
     unsigned int r;
     for (r = 0; r < r1; r++);
 }
+
