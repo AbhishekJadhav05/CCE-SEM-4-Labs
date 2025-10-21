@@ -6,7 +6,7 @@
 #define EN_CTRL  (1 << 9)       // P0.9 (EN)
 #define PIR_PIN  (1 << 15)      // P0.15 (PIR input)
 #define ADC_CHANNEL 0
-#define TEMP_THRESHOLD 372  // corresponds to ~30°C
+#define TEMP_THRESHOLD 30  // corresponds to ~30°C
 
 
 void lcd_write(void);
@@ -79,7 +79,10 @@ int main(void)
             flag1 = 0; temp1 = 0xC0; lcd_write();
             flag1 = 1;
 						sprintf(msg_values,"TEMP %d PIR %d",temperature_c,ifDetectedPIR);
+						while(1){
             for (i = 0; msg_values[i] != '\0'; i++) { temp1 = msg_values[i]; lcd_write(); }
+					}
+						
         }
         else // No motion
         {
