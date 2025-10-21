@@ -6,8 +6,8 @@
 #define EN_CTRL  (1 << 9)       // P0.9 (EN)
 #define PIR_PIN  (1 << 15)      // P0.15 (PIR input)
 #define ADC_CHANNEL 0
-#define TEMP_THRESHOLD 372  // corresponds to ~30°C
-
+#define TEMP_THRESHOLD 30  // corresponds to ~30°C
+#define TEMP_ADJUST 55
 
 void lcd_write(void);
 void port_write(void);
@@ -28,9 +28,10 @@ unsigned int i, flag1;
 
 int main(void)
 {
-    int ifDetectedPIR;
-	  int ifDetectedTEMP;
-		uint16_t adc_value;
+    int ifDetectedPIR=0;
+	  int ifDetectedTEMP=0;
+		uint16_t adc_value=0;
+		int temperature_c=0;
 	
     SystemInit();
     SystemCoreClockUpdate();
@@ -38,6 +39,7 @@ int main(void)
     // Configure pins
     LPC_PINCON->PINSEL0 = 0;   // P0.0–P0.15 as GPIO
     LPC_PINCON->PINSEL1 = 0;
+		LPC_GPIO0->FIODIR |= (DT_CTRL | RS_CTRL | EN_CTRL); // outputs
 
     LPC_GPIO0->FIODIR &= ~PIR_PIN;  // PIR input
 
@@ -58,36 +60,40 @@ int main(void)
     while (1)
     {
 				adc_value = ADC_Read();
-				if(adc_value > TEMP_THRESHOLD){
+			  temperature_c = ((adc_value / 4095.0f) * 330.0f)- TEMP_ADJUST; // Vref is 3.3, so 3.3 * 100 = 330
+				if(temperature_c > TEMP_THRESHOLD){
 					ifDetectedTEMP = 1;
 				}
 				else{
 					ifDetectedTEMP = 0;
 				}
-        ifDetectedPIR = LPC_GPIO0->FIOPIN & PIR_PIN;
+        ifDetectedPIR = (LPC_GPIO0->FIOPIN & PIR_PIN) ? 1 : 0; // Normalize to 0 or 1
         if (ifDetectedTEMP & ifDetectedPIR) // Motion detected
         {
 
             // Update LCD: INTRUSION!!!!!!!!!!
-            flag1 = 0; temp1 = 0x80; lcd_write();
+            flag1 = 0; temp1 = 0x80;  lcd_write();
             flag1 = 1;
             for (i = 0; msg_on1[i] != '\0'; i++) { temp1 = msg_on1[i]; lcd_write(); }
 
             flag1 = 0; temp1 = 0xC0; lcd_write();
             flag1 = 1;
-						sprintf(msg_values,"TEMP %d PIR %d",adc_value,ifDetectedPIR);
+						sprintf(msg_values,"TEMP %d PIR %d",temperature_c,ifDetectedPIR);
             for (i = 0; msg_values[i] != '\0'; i++) { temp1 = msg_values[i]; lcd_write(); }
+						delay_lcd(50000);
+						return 0;
+						
         }
         else // No motion
         {
-            // Update LCD: DETECTING < values
+            // Update LCD: DETECTING << values
             flag1 = 0; temp1 = 0x80; lcd_write();
             flag1 = 1;
             for (i = 0; msg_off1[i] != '\0'; i++) { temp1 = msg_off1[i]; lcd_write(); }
 
             flag1 = 0; temp1 = 0xC0; lcd_write();
             flag1 = 1;
-						sprintf(msg_values,"TEMP %d PIR %d",adc_value,ifDetectedPIR);
+						sprintf(msg_values,"TEMP %d PIR %d",temperature_c,ifDetectedPIR);
             for (i = 0; msg_values[i] != '\0'; i++) { temp1 = msg_values[i]; lcd_write(); }
         }
         delay_lcd(50000);
@@ -96,29 +102,28 @@ int main(void)
 
 void lcd_write(void)
 {
-    // Send higher nibble
-    temp2 = temp1 & 0xF0;   // mask high nibble
-    temp2 >>= 4;            // move it to lower nibble position
-    temp2 <<= 4;            // place it on P0.4–P0.7
+
+    temp2 = temp1 & 0xF0;   
+    temp2 >>= 4;            
+    temp2 <<= 4;            
     port_write();
 
-    // Send lower nibble
-    temp2 = temp1 & 0x0F;   // mask low nibble
-    temp2 <<= 4;            // place it on P0.4–P0.7
+    temp2 = temp1 & 0x0F;   
+    temp2 <<= 4;            
     port_write();
 }
 
 void port_write(void)
 {
-    LPC_GPIO0->FIOCLR = DT_CTRL;      // clear data bits
-    LPC_GPIO0->FIOSET = temp2;        // set new data bits
+    LPC_GPIO0->FIOCLR = DT_CTRL;      
+    LPC_GPIO0->FIOSET = temp2;        
 
     if (flag1 == 0)
         LPC_GPIO0->FIOCLR = RS_CTRL;  // command
     else
         LPC_GPIO0->FIOSET = RS_CTRL;  // data
 
-    LPC_GPIO0->FIOSET = EN_CTRL;      // pulse enable
+    LPC_GPIO0->FIOSET = EN_CTRL;      
     delay_lcd(10000);
     LPC_GPIO0->FIOCLR = EN_CTRL;
     delay_lcd(10000);
@@ -126,18 +131,18 @@ void port_write(void)
 
 void ADC_Init(void) {
     LPC_PINCON->PINSEL1 &= ~(3 << 14);
-    LPC_PINCON->PINSEL1 |=  (1 << 14);   // P0.23 as AD0.0
-    LPC_SC->PCONP |= (1 << 12);          // Power up ADC
-    LPC_ADC->ADCR = (1 << ADC_CHANNEL) | // Select AD0.0
-                    (4 << 8) |           // ADC clock = PCLK/5
-                    (1 << 21);           // Enable ADC
+    LPC_PINCON->PINSEL1 |=  (1 << 14);   
+    LPC_SC->PCONP |= (1 << 12);          
+    LPC_ADC->ADCR = (1 << ADC_CHANNEL) | 
+                    (4 << 8) |           
+                    (1 << 21);           
 }
 
 uint16_t ADC_Read(void) {
 		uint16_t result;
-    LPC_ADC->ADCR |= (1 << 24);          // Start conversion
-    while ((LPC_ADC->ADGDR & (1U << 31)) == 0); // Wait for DONE
-    result = (LPC_ADC->ADGDR >> 4) & 0xFFF; // 12-bit result
+    LPC_ADC->ADCR |= (1 << 24);          
+    while ((LPC_ADC->ADGDR & (1U << 31)) == 0); 
+    result = (LPC_ADC->ADGDR >> 4) & 0xFFF; 
     return result;
 }
 
