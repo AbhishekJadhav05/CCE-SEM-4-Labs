@@ -63,12 +63,12 @@ int main(void)
     // Main loop
     while (1)
     {
-				adc_value = ADC_Read();
 				sumTemp = 0;
 				tickrate = 0;
 			  while(tickrate<5){
+				  	adc_value = ADC_Read();
 					sumTemp = ((adc_value / 4095.0f) * 330.0f)- TEMP_ADJUST; // Vref is 3.3, so 3.3 * 100 = 330
-					delay_ms(10000);
+					delay_ms(100);
 				}
 				temperature_c = sumTemp/5;
 				if(temperature_c > TEMP_THRESHOLD){
