@@ -7,8 +7,9 @@
 #define PIR_PIN  (1 << 15)      // P0.15 (PIR input)
 #define ADC_CHANNEL 0
 #define TEMP_THRESHOLD 30  // corresponds to ~30°C
-#define TEMP_ADJUST 55
+#define TEMP_ADJUST 50
 #define BYPASS_PIR 0
+#define BYPASS_PIR_VALUE 0
 
 void lcd_write(void);
 void port_write(void);
@@ -29,6 +30,8 @@ unsigned int i, flag1;
 
 int main(void)
 {
+		int sumTemp = 0;
+		int tickrate=0;
     int ifDetectedPIR=0;
 	  int ifDetectedTEMP=0;
 		uint16_t adc_value=0;
@@ -60,8 +63,15 @@ int main(void)
     // Main loop
     while (1)
     {
-				adc_value = ADC_Read();
-			  temperature_c = ((adc_value / 4095.0f) * 330.0f)- TEMP_ADJUST; // Vref is 3.3, so 3.3 * 100 = 330
+				sumTemp = 0;
+				tickrate = 0;
+			  while(tickrate<5){
+				  	adc_value = ADC_Read();
+					sumTemp = ((adc_value / 4095.0f) * 330.0f)- TEMP_ADJUST; // Vref is 3.3, so 3.3 * 100 = 330
+					delay_ms(1000);
+				  	tickrate +=1;
+				}
+				temperature_c = sumTemp/5;
 				if(temperature_c > TEMP_THRESHOLD){
 					ifDetectedTEMP = 1;
 				}
@@ -70,7 +80,7 @@ int main(void)
 				}
         ifDetectedPIR = (LPC_GPIO0->FIOPIN & PIR_PIN) ? 1 : 0; // Normalize to 0 or 1
 				if(BYPASS_PIR){
-						ifDetectedPIR = 1;
+						ifDetectedPIR = BYPASS_PIR_VALUE;
 				}
         if (ifDetectedTEMP & ifDetectedPIR) // Motion detected
         {
@@ -102,6 +112,7 @@ int main(void)
         }
         delay_lcd(50000);
     }
+		
 }
 
 void lcd_write(void)
