@@ -95,7 +95,7 @@ int main(void)
 						sprintf(msg_values,"TEMP %d PIR %d",temperature_c,ifDetectedPIR);
             for (i = 0; msg_values[i] != '\0'; i++) { temp1 = msg_values[i]; lcd_write(); }
 						delay_lcd(50000);
-						return 0;
+						delay_ms(10000);
 						
         }
         else // No motion
